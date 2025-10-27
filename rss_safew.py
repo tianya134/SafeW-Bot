@@ -250,8 +250,8 @@ def build_caption(title, author, description, link):
     footer = """
 ✅论坛最新地址: 
 tyw29.cc  tyw30.cc tyw33.cc
-⚜️点击加入交流群: https://www.sfw.vc/tyw666
-⚜️天涯论坛（唯一联系）方式：
+✅点击加入交流群: https://www.sfw.vc/tyw666
+✅天涯论坛（唯一联系）方式：
 沈复： @tywcc
 沐泽： @ssss001
 怡怡： @yiyi3
