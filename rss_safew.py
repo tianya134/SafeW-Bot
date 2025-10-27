@@ -14,7 +14,6 @@ SAFEW_CHAT_ID = os.getenv("SAFEW_CHAT_ID")
 RSS_FEED_URL = os.getenv("RSS_FEED_URL")
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 SENT_POSTS_FILE = os.path.join(SCRIPT_DIR, "sent_posts.json")
-# 待审核数据结构：[{"tid": int, "title": str, "author": str, "description": str}, ...]
 PENDING_POSTS_FILE = os.path.join(SCRIPT_DIR, "pending_tids.json")
 MAX_PUSH_PER_RUN = 5
 FIXED_PROJECT_URL = "https://tyw29.cc/"
@@ -50,7 +49,7 @@ def is_valid_image(data):
     logging.warning(f"无效图片文件头：{data[:8].hex()}")
     return False
 
-# ====================== TID管理（核心：RSS提取存储）======================
+# ====================== TID管理 =======================
 def load_sent_tids():
     try:
         if not os.path.exists(SENT_POSTS_FILE):
@@ -137,7 +136,7 @@ def save_pending_data(data):
         except:
             pass
 
-# ====================== TID提取/RSS获取（核心：提取RSS完整信息）======================
+# ====================== TID提取/RSS获取（核心修改）======================
 def extract_tid_from_url(url):
     try:
         match = re.search(r'thread-(\d+)\.htm', url)
@@ -164,23 +163,18 @@ def fetch_updates(sent_tids, pending_tids):
                 continue
             if tid not in sent_tids and tid not in pending_tids:
                 entry["tid"] = tid
-                # 提取标题（原逻辑保留）
                 entry["rss_title"] = entry.get("title", "无标题").strip() 
-                # 核心修复：提取作者信息（从dc命名空间子字典获取）
-                # 1. 优先从feedparser解析的dc命名空间子字典获取（标准路径）
-                dc_subdict = entry.get("dc", {})  # 获取dc命名空间子字典
-                author = dc_subdict.get("creator")  # 从子字典提取creator（对应<dc:creator>）
-                # 2. 兜底：兼容部分特殊RSS的扁平化解析场景
-                if not author:
-                    author = entry.get("dc_creator") or entry.get("creator")
-                # 3. 最终处理：空值替换为未知用户，去除前后空格
+                # 核心修复：复用你之前验证有效的提取逻辑，优先使用author和dc_author
+                # 完全复用你提供的有效代码，并补充其他可能的键名
+                author = entry.get("author") or entry.get("dc_author") or \
+                         entry.get("dc", {}).get("creator") or entry.get("dc_creator") or entry.get("creator")
                 entry["rss_author"] = author.strip() if (author and str(author).strip()) else "未知用户"
-                # 提取描述（原逻辑保留）
+                # 提取描述
                 desc = entry.get("description", "无描述").strip()
                 entry["rss_description"] = re.sub(r'<[^>]+>', '', desc)  
-                # 加入有效列表并打印调试日志
+                # 调试日志：显示提取到的作者信息
+                logging.debug(f"TID={tid} 作者提取：{entry['rss_author']}（来源：author/dc_author等）")
                 valid_entries.append(entry)
-                logging.debug(f"新增待处理TID={tid}（标题：{entry['rss_title'][:20]}... 作者：{entry['rss_author']}）")
         
         logging.info(f"RSS筛选完成：共{len(valid_entries)}条全新待推送帖")
         return sorted(valid_entries, key=lambda x: x["tid"])
@@ -188,9 +182,8 @@ def fetch_updates(sent_tids, pending_tids):
         logging.error(f"获取RSS异常：{str(e)}")
         return None
 
-# ====================== 帖子信息获取（仅判断审核状态和提取图片）=======================
+# ====================== 帖子信息获取 =======================
 async def get_post_status(session, webpage_url, tid):
-    """返回：(images, is_pending, status_code)"""
     status_code = 200
     try:
         headers = {
@@ -247,7 +240,7 @@ async def get_post_status(session, webpage_url, tid):
         logging.error(f"TID={tid} 帖子信息获取异常：{str(e)}")
         return [], False, status_code
 
-# ====================== Markdown转义/消息构造（新增描述）======================
+# ====================== Markdown转义/消息构造 =======================
 def escape_markdown(text):
     special_chars = r"_*~`>#+!()"
     for char in special_chars:
@@ -391,7 +384,7 @@ async def send_text_msg(session, caption, tid, delay=5):
         logging.error(f"TID={tid} 文本发送异常：{str(e)}")
         return False
 
-# ====================== 待审核数据检查（使用RSS存储的信息）======================
+# ====================== 待审核数据检查 =======================
 async def check_pending_data(session):
     pending_data = load_pending_data()
     if not pending_data:
@@ -454,7 +447,7 @@ async def check_pending_data(session):
         save_sent_tids(passed_tids, sent_tids)
     logging.info(f"待审核检查完成：{len(passed_tids)}条通过，{len(still_pending)}条待审，{len(deleted_tids)}条删除")
 
-# ====================== 全新帖子推送（从RSS提取信息存储待审核）======================
+# ====================== 全新帖子推送 =======================
 async def push_new_posts(session, new_entries):
     if not new_entries:
         logging.info("无全新帖子待推送")
