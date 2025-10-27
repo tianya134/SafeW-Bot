@@ -164,15 +164,11 @@ def fetch_updates(sent_tids, pending_tids):
             if tid not in sent_tids and tid not in pending_tids:
                 entry["tid"] = tid
                 entry["rss_title"] = entry.get("title", "无标题").strip() 
-                # 核心修复：复用你之前验证有效的提取逻辑，优先使用author和dc_author
-                # 完全复用你提供的有效代码，并补充其他可能的键名
                 author = entry.get("author") or entry.get("dc_author") or \
                          entry.get("dc", {}).get("creator") or entry.get("dc_creator") or entry.get("creator")
                 entry["rss_author"] = author.strip() if (author and str(author).strip()) else "未知用户"
-                # 提取描述
                 desc = entry.get("description", "无描述").strip()
                 entry["rss_description"] = re.sub(r'<[^>]+>', '', desc)  
-                # 调试日志：显示提取到的作者信息
                 logging.debug(f"TID={tid} 作者提取：{entry['rss_author']}（来源：author/dc_author等）")
                 valid_entries.append(entry)
         
