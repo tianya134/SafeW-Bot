@@ -20,7 +20,7 @@ MAX_PUSH_PER_RUN = 5
 FIXED_PROJECT_URL = "https://tyw29.cc/"
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
 MAX_IMAGES_PER_MSG = 10
-MAX_DESCRIPTION_LENGTH = 300  # 描述最大长度，避免消息过长
+MAX_DESCRIPTION_LENGTH = 300  
 
 # ====================== 日志配置 =======================
 logging.basicConfig(
@@ -51,7 +51,6 @@ def is_valid_image(data):
     return False
 
 # ====================== TID管理（核心：RSS提取存储）======================
-# 已推送TID
 def load_sent_tids():
     try:
         if not os.path.exists(SENT_POSTS_FILE):
@@ -75,7 +74,6 @@ def save_sent_tids(new_tids, existing_tids):
     except Exception as e:
         logging.error(f"保存已推送TID失败：{str(e)}")
 
-# 待审核数据（含RSS提取的标题、作者、描述）
 def load_pending_data():
     try:
         if not os.path.exists(PENDING_POSTS_FILE):
@@ -88,7 +86,6 @@ def load_pending_data():
         with open(PENDING_POSTS_FILE, "r", encoding="utf-8") as f:
             content = f.read().strip() or "[]"
             data = json.loads(content)
-        # 兼容旧格式（纯TID或无描述的结构）
         valid_data = []
         for item in data:
             if isinstance(item, dict) and "tid" in item:
@@ -96,10 +93,10 @@ def load_pending_data():
                     "tid": int(item["tid"]),
                     "title": item.get("title", "无标题"),
                     "author": item.get("author", "未知用户"),
-                    "description": item.get("description", "无描述")  # 新增描述字段
+                    "description": item.get("description", "无描述")  
                 }
                 valid_data.append(valid_item)
-            elif isinstance(item, int):  # 旧格式纯TID
+            elif isinstance(item, int): 
                 valid_data.append({
                     "tid": item,
                     "title": "无标题",
@@ -114,7 +111,6 @@ def load_pending_data():
 
 def save_pending_data(data):
     try:
-        # 去重（按TID）、排序
         unique_data = []
         seen_tids = set()
         for item in sorted(data, key=lambda x: x["tid"]):
@@ -127,7 +123,6 @@ def save_pending_data(data):
                     "author": item.get("author", "未知用户").strip(),
                     "description": item.get("description", "无描述").strip()
                 })
-        # 原子写入
         temp_file = f"{PENDING_POSTS_FILE}.tmp"
         with open(temp_file, "w", encoding="utf-8") as f:
             json.dump(unique_data, f, ensure_ascii=False, indent=2)
@@ -168,13 +163,11 @@ def fetch_updates(sent_tids, pending_tids):
             if not tid:
                 continue
             if tid not in sent_tids and tid not in pending_tids:
-                # 从RSS提取完整信息并附加到entry
                 entry["tid"] = tid
-                entry["rss_title"] = entry.get("title", "无标题").strip()  # 标题
-                entry["rss_author"] = entry.get("dc_creator", "未知用户").strip()  # 作者（dc:creator）
-                # 描述（处理CDATA）
+                entry["rss_title"] = entry.get("title", "无标题").strip() 
+                entry["rss_author"] = entry.get("dc_creator", "未知用户").strip() 
                 desc = entry.get("description", "无描述").strip()
-                entry["rss_description"] = re.sub(r'<[^>]+>', '', desc)  # 去除HTML标签
+                entry["rss_description"] = re.sub(r'<[^>]+>', '', desc)  
                 valid_entries.append(entry)
                 logging.debug(f"新增待处理TID={tid}（标题：{entry['rss_title'][:20]}...）")
         
@@ -204,7 +197,6 @@ async def get_post_status(session, webpage_url, tid):
         soup = BeautifulSoup(html, "html.parser")
         is_pending = False
 
-        # 检测审核状态
         audit_h4_tags = soup.find_all("h4", class_=re.compile(r"card-title"))
         audit_pattern = re.compile(r"本帖正在审核中.*您无权查看", re.DOTALL | re.UNICODE)
         for h4_tag in audit_h4_tags:
@@ -218,7 +210,6 @@ async def get_post_status(session, webpage_url, tid):
             logging.info(f"TID={tid} 确认待审核状态")
             return [], True, status_code
 
-        # 提取图片（仅当审核通过时需要）
         target_divs = soup.find_all("div", class_="message break-all", isfirst="1") or soup.find_all("div", class_="message break-all")
         if not target_divs:
             logging.warning(f"TID={tid} 未找到正文div，无图片")
@@ -254,13 +245,12 @@ def escape_markdown(text):
     return text
 
 def build_caption(title, author, description, link):
-    # 截断过长描述
     if len(description) > MAX_DESCRIPTION_LENGTH:
         description = description[:MAX_DESCRIPTION_LENGTH] + "..."
     footer = """
 论坛最新地址:
 tyw29.cc  tyw30.cc  tyw33.cc
-点击前往福利通知群: https://www.safew.vc/tyw777
+点击前往福利通知群: https://www.sfw.vc/tyw777
 点击前往聊天群组: https://www.sfw.vc/tyw666
 天涯论坛（唯一联系）方式：
 沈复：＠tywcc
@@ -270,7 +260,7 @@ tyw29.cc  tyw30.cc  tyw33.cc
     return (
         f"{escape_markdown(title)}\n"
         f"由 ＠{escape_markdown(author)} 发起的话题讨论\n"
-        f"{escape_markdown(description)}\n"  # 新增描述内容
+        f"{escape_markdown(description)}\n"  
         f"链接：{link}\n\n"
         f"{footer}"
     )
@@ -408,7 +398,6 @@ async def check_pending_data(session):
         link = f"{FIXED_PROJECT_URL}thread-{tid}.htm"
         logging.info(f"检查TID={tid} 审核状态：{link[:50]}...")
         
-        # 获取帖子状态（仅判断是否审核通过和图片）
         images, is_pending, status_code = await get_post_status(session, link, tid)
 
         if status_code == 404:
@@ -426,7 +415,6 @@ async def check_pending_data(session):
             logging.info(f"TID={tid} 仍待审核，保留")
             continue
 
-        # 审核通过：使用RSS存储的标题、作者、描述推送
         caption = build_caption(
             title=item["title"],
             author=item["author"],
@@ -450,7 +438,6 @@ async def check_pending_data(session):
             still_pending.append(item)
             logging.warning(f"TID={tid} 推送失败，保留待重试")
 
-    # 更新数据
     save_pending_data(still_pending)
     if passed_tids:
         save_sent_tids(passed_tids, sent_tids)
@@ -472,13 +459,11 @@ async def push_new_posts(session, new_entries):
         link = entry["link"]
         delay = 5 if i > 0 else 0
 
-        # 从RSS获取预存信息
         rss_title = entry["rss_title"]
         rss_author = entry["rss_author"]
         rss_description = entry["rss_description"]
         logging.debug(f"TID={tid} RSS信息：标题={rss_title[:20]}，作者={rss_author}，描述={rss_description[:30]}...")
 
-        # 检查帖子状态
         images, is_pending, status_code = await get_post_status(session, link, tid)
         
         if status_code == 404:
@@ -490,7 +475,6 @@ async def push_new_posts(session, new_entries):
             continue
 
         if is_pending:
-            # 待审核：存储RSS提取的信息
             pending_data.append({
                 "tid": tid,
                 "title": rss_title,
@@ -501,7 +485,6 @@ async def push_new_posts(session, new_entries):
             logging.info(f"TID={tid} 新增待审核（标题：{rss_title[:20]}...）")
             continue
 
-        # 直接推送：使用RSS信息
         caption = build_caption(
             title=rss_title,
             author=rss_author,
