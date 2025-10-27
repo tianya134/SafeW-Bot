@@ -225,30 +225,32 @@ async def send_single_photo_with_caption(session, image_url, caption, delay=5):
             img_content_type = img_resp.headers.get("Content-Type", "image/jpeg")
             logging.info(f"图片下载成功：大小{len(img_data)}字节，类型{img_content_type}")
 
-        # 2. 构造multipart/form-data请求体
+        # 2. 构造multipart/form-data请求体（改用字节流拼接，避免编码冲突）
         boundary = f"----WebKitFormBoundary{uuid.uuid4().hex[:16]}"
         chat_id_str = str(SAFEW_CHAT_ID)
-        # 生成唯一文件名（避免特殊字符）
-        filename = f"single_img_{uuid.uuid4().hex[:8]}_{image_url.split('/')[-1].split('?')[0]}"
-        filename = filename.replace('"', '').replace("'", "").replace(" ", "_")
+        # 生成纯英文文件名（避免中文编码问题）
+        filename = f"single_img_{uuid.uuid4().hex[:8]}.jpg"
 
-        # 文本字段（chat_id + caption）
+        # 文本部分（utf-8编码为字节流）
         text_parts = [
-            f"--{boundary}\r\n"
-            f'Content-Disposition: form-data; name="chat_id"\r\n\r\n{chat_id_str}\r\n',
-            f"--{boundary}\r\n"
-            f'Content-Disposition: form-data; name="caption"\r\n\r\n{caption}\r\n'
+            f"--{boundary}".encode("utf-8"),
+            b'Content-Disposition: form-data; name="chat_id"',
+            b'',
+            chat_id_str.encode("utf-8"),
+            f"--{boundary}".encode("utf-8"),
+            b'Content-Disposition: form-data; name="caption"',
+            b'',
+            caption.encode("utf-8"),
+            f"--{boundary}".encode("utf-8"),
+            f'Content-Disposition: form-data; name="photo"; filename="{filename}"'.encode("utf-8"),
+            f"Content-Type: {img_content_type}".encode("utf-8"),
+            b'',
+            img_data,  # 图片二进制数据直接加入
+            f"--{boundary}--".encode("utf-8")
         ]
-        text_part = "".join(text_parts).encode("utf-8")
 
-        # 图片文件字段
-        file_part_header = (
-            f"--{boundary}\r\n"
-            f'Content-Disposition: form-data; name="photo"; filename="{filename}"\r\n'
-            f"Content-Type: {img_content_type}\r\n\r\n"
-        ).encode("utf-8")
-        end_part = f"\r\n--{boundary}--\r\n".encode("utf-8")
-        body = text_part + file_part_header + img_data + end_part
+        # 拼接请求体（用\r\n分隔字节流）
+        body = b'\r\n'.join(text_parts)
 
         # 3. 发送请求
         headers = {
@@ -308,7 +310,7 @@ async def send_media_group(session, image_urls, caption, delay=5):
                     img_datas.append({
                         "data": img_data,
                         "content_type": img_resp.headers.get("Content-Type", "image/jpeg"),
-                        "filename": f"multi_img_{idx}_{uuid.uuid4().hex[:8]}.jpg"  # 唯一文件名
+                        "filename": f"multi_img_{idx}_{uuid.uuid4().hex[:8]}.jpg"  # 纯英文文件名
                     })
                 logging.info(f"图片{idx}下载成功：大小{len(img_data)}字节")
             except Exception as e:
@@ -318,21 +320,21 @@ async def send_media_group(session, image_urls, caption, delay=5):
         # 2. 生成multipart分隔符
         boundary = f"----WebKitFormBoundary{uuid.uuid4().hex[:16]}"
         chat_id_str = str(SAFEW_CHAT_ID)
-        body_parts = []
+        body_parts = []  # 存储字节流片段
 
-        # 3. 添加必填字段（chat_id + caption）
+        # 3. 添加必填字段（chat_id + caption）- 字节流格式（utf-8编码）
         body_parts.extend([
-            f"--{boundary}",
-            'Content-Disposition: form-data; name="chat_id"',
-            '',  # 空行分隔头和内容
-            chat_id_str,
-            f"--{boundary}",
-            'Content-Disposition: form-data; name="caption"',
-            '',
-            caption
+            f"--{boundary}".encode("utf-8"),
+            b'Content-Disposition: form-data; name="chat_id"',
+            b'',
+            chat_id_str.encode("utf-8"),
+            f"--{boundary}".encode("utf-8"),
+            b'Content-Disposition: form-data; name="caption"',
+            b'',
+            caption.encode("utf-8")  # 中文caption用utf-8编码
         ])
 
-        # 4. 构造media数组（InputMediaPhoto）+ 图片文件字段
+        # 4. 构造media数组（InputMediaPhoto）+ 图片文件字段（字节流拼接）
         media_array = []
         for idx, img in enumerate(img_datas, 1):
             # media数组元素：关联图片文件（attach://文件名）
@@ -340,29 +342,29 @@ async def send_media_group(session, image_urls, caption, delay=5):
                 "type": "photo",
                 "media": f"attach://{img['filename']}"
             })
-            # 添加图片文件字段
+            # 添加图片文件字段（文本部分utf-8编码，二进制数据直接加入）
             body_parts.extend([
-                f"--{boundary}",
-                f'Content-Disposition: form-data; name="photo{idx}"; filename="{img["filename"]}"',
-                f"Content-Type: {img['content_type']}",
-                '',
-                img["data"].decode("latin-1")  # 二进制转latin-1兼容编码
+                f"--{boundary}".encode("utf-8"),
+                f'Content-Disposition: form-data; name="photo{idx}"; filename="{img["filename"]}"'.encode("utf-8"),
+                f"Content-Type: {img['content_type']}".encode("utf-8"),
+                b'',
+                img["data"]  # 图片二进制数据直接作为字节流加入
             ])
 
-        # 5. 添加media数组JSON字段（官方要求）
+        # 5. 添加media数组JSON字段（utf-8编码）
         body_parts.extend([
-            f"--{boundary}",
-            'Content-Disposition: form-data; name="media"',
-            'Content-Type: application/json',
-            '',
-            json.dumps(media_array, ensure_ascii=False)
+            f"--{boundary}".encode("utf-8"),
+            b'Content-Disposition: form-data; name="media"',
+            b'Content-Type: application/json',
+            b'',
+            json.dumps(media_array, ensure_ascii=False).encode("utf-8")
         ])
 
-        # 6. 结束符
-        body_parts.append(f"--{boundary}--")
+        # 6. 结束符（字节流）
+        body_parts.append(f"--{boundary}--".encode("utf-8"))
 
-        # 7. 拼接请求体（用\r\n分隔，编码为字节流）
-        body = "\r\n".join(body_parts).encode("latin-1")
+        # 7. 拼接请求体（用\r\n分隔所有字节流片段，彻底避免编码转换）
+        body = b'\r\n'.join(body_parts)
         logging.info(f"请求体构造完成：总大小{len(body)}字节")
 
         # 8. 发送请求
@@ -517,7 +519,7 @@ async def main():
     # 依赖版本提示
     logging.info(f"当前aiohttp版本：{aiohttp.__version__}（推荐≥3.8.0）")
     if aiohttp.__version__ < "3.8.0":
-        logging.warning("aiohttp版本低，如果存在兼容问题请升级")
+        logging.warning("⚠️ 警告：aiohttp版本过低，可能存在兼容问题")
 
     # 执行推送逻辑
     try:
