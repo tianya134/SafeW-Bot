@@ -132,7 +132,7 @@ def save_pending_data(data):
         except:
             pass
 
-# ====================== TID提取/RSS获取（核心修改）======================
+# ====================== TID提取/RSS获取 ======================
 def extract_tid_from_url(url):
     try:
         match = re.search(r'thread-(\d+)\.htm', url)
