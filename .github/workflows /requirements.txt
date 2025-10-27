@@ -1,4 +1,0 @@
-# requirements.txt（项目依赖清单）
-feedparser>=6.0.10
-aiohttp>=3.8.0  
-beautifulsoup4>=4.12.0  
