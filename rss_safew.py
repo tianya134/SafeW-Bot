@@ -18,8 +18,7 @@ PENDING_POSTS_FILE = os.path.join(SCRIPT_DIR, "pending_tids.json")
 MAX_PUSH_PER_RUN = 5
 FIXED_PROJECT_URL = "https://tyw29.cc/"
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
-MAX_IMAGES_PER_MSG = 10
-MAX_DESCRIPTION_LENGTH = 300  
+MAX_IMAGES_PER_MSG = 10  
 
 # ====================== 日志配置 =======================
 logging.basicConfig(
@@ -91,16 +90,14 @@ def load_pending_data():
                 valid_item = {
                     "tid": int(item["tid"]),
                     "title": item.get("title", "无标题"),
-                    "author": item.get("author", "未知用户"),
-                    "description": item.get("description", "无描述")  
+                    "author": item.get("author", "未知用户")
                 }
                 valid_data.append(valid_item)
             elif isinstance(item, int): 
                 valid_data.append({
                     "tid": item,
                     "title": "无标题",
-                    "author": "未知用户",
-                    "description": "无描述"
+                    "author": "未知用户"
                 })
         logging.info(f"读取待审核数据：共{len(valid_data)}条 → TID列表：{[d['tid'] for d in valid_data]}")
         return valid_data
@@ -119,8 +116,7 @@ def save_pending_data(data):
                 unique_data.append({
                     "tid": tid,
                     "title": item.get("title", "无标题").strip(),
-                    "author": item.get("author", "未知用户").strip(),
-                    "description": item.get("description", "无描述").strip()
+                    "author": item.get("author", "未知用户").strip()
                 })
         temp_file = f"{PENDING_POSTS_FILE}.tmp"
         with open(temp_file, "w", encoding="utf-8") as f:
@@ -167,8 +163,6 @@ def fetch_updates(sent_tids, pending_tids):
                 author = entry.get("author") or entry.get("dc_author") or \
                          entry.get("dc", {}).get("creator") or entry.get("dc_creator") or entry.get("creator")
                 entry["rss_author"] = author.strip() if (author and str(author).strip()) else "未知用户"
-                desc = entry.get("description", "无描述").strip()
-                entry["rss_description"] = re.sub(r'<[^>]+>', '', desc)  
                 logging.debug(f"TID={tid} 作者提取：{entry['rss_author']}（来源：author/dc_author等）")
                 valid_entries.append(entry)
         
@@ -244,9 +238,7 @@ def escape_markdown(text):
             text = text.replace(char, f"\{char}")
     return text
 
-def build_caption(title, author, description, link):
-    if len(description) > MAX_DESCRIPTION_LENGTH:
-        description = description[:MAX_DESCRIPTION_LENGTH] + "..."
+def build_caption(title, author, link):
     footer = """
 ✅论坛最新地址: 
 tyw29.cc  tyw30.cc tyw33.cc
@@ -259,7 +251,6 @@ tyw29.cc  tyw30.cc tyw33.cc
     return (
         f"{escape_markdown(title)}\n"
         f"由 ＠{escape_markdown(author)} 发起的话题讨论\n"
-        f"{escape_markdown(description)}\n"  
         f"链接：{link}\n\n"
         f"{footer}"
     )
@@ -417,7 +408,6 @@ async def check_pending_data(session):
         caption = build_caption(
             title=item["title"],
             author=item["author"],
-            description=item["description"],
             link=link
         )
         
@@ -460,8 +450,7 @@ async def push_new_posts(session, new_entries):
 
         rss_title = entry["rss_title"]
         rss_author = entry["rss_author"]
-        rss_description = entry["rss_description"]
-        logging.debug(f"TID={tid} RSS信息：标题={rss_title[:20]}，作者={rss_author}，描述={rss_description[:30]}...")
+        logging.debug(f"TID={tid} RSS信息：标题={rss_title[:20]}，作者={rss_author}")
 
         images, is_pending, status_code = await get_post_status(session, link, tid)
         
@@ -477,8 +466,7 @@ async def push_new_posts(session, new_entries):
             pending_data.append({
                 "tid": tid,
                 "title": rss_title,
-                "author": rss_author,
-                "description": rss_description
+                "author": rss_author
             })
             save_pending_data(pending_data)
             logging.info(f"TID={tid} 新增待审核（标题：{rss_title[:20]}... 作者：{rss_author}）")
@@ -487,7 +475,6 @@ async def push_new_posts(session, new_entries):
         caption = build_caption(
             title=rss_title,
             author=rss_author,
-            description=rss_description,
             link=link
         )
         
