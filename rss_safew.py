@@ -89,7 +89,7 @@ def save_pending_tids(tids):
         unique_tids = sorted(list(set(tids)))
         with open(PENDING_POSTS_FILE, "w", encoding="utf-8") as f:
             json.dump(unique_tids, f, ensure_ascii=False, indent=2)
-        logging.info(f"待审核TID更新：当前共{len(unique_tids)}条 → {unique_tids}")  # 新增：显示具体TID
+        logging.info(f"待审核TID更新：当前共{len(unique_tids)}条 → {unique_tids}")
     except Exception as e:
         logging.error(f"保存待审核TID失败：{str(e)}")
 
@@ -129,8 +129,10 @@ def fetch_updates(sent_tids, pending_tids):
         logging.error(f"获取RSS异常：{str(e)}")
         return None
 
-# ====================== 帖子信息获取（审核+图片）=======================
+# ====================== 核心修复：帖子信息获取（新增状态码返回）=======================
 async def get_post_info(session, webpage_url, tid):
+    """返回：(images: 图片列表, is_pending: 是否待审核, status_code: 请求状态码)"""
+    status_code = 200  # 默认200，异常时更新
     try:
         headers = {
             "User-Agent": USER_AGENT,
@@ -138,9 +140,10 @@ async def get_post_info(session, webpage_url, tid):
             "Accept": "text/html,application/xhtml+xml"
         }
         async with session.get(webpage_url, headers=headers, timeout=20) as resp:
+            status_code = resp.status  # 记录实际状态码
             if resp.status != 200:
-                logging.warning(f"TID={tid} 帖子请求失败（{resp.status}）")
-                return [], False
+                logging.warning(f"TID={tid} 帖子请求失败（状态码：{resp.status}）")
+                return [], False, status_code
             html = await resp.text()
 
         soup = BeautifulSoup(html, "html.parser")
@@ -158,14 +161,14 @@ async def get_post_info(session, webpage_url, tid):
             is_pending = True
 
         if is_pending:
-            logging.info(f"TID={tid} 确认待审核状态，加入待审核列表")
-            return [], True
+            logging.info(f"TID={tid} 确认待审核状态（状态码：{status_code}）")
+            return [], True, status_code
 
         # 图片提取
         target_divs = soup.find_all("div", class_="message break-all", isfirst="1") or soup.find_all("div", class_="message break-all")
         if not target_divs:
-            logging.warning(f"TID={tid} 未找到正文div，无图片")
-            return [], False
+            logging.warning(f"TID={tid} 未找到正文div（状态码：{status_code}），无图片")
+            return [], False, status_code
 
         images = []
         base_domain = "/".join(webpage_url.split("/")[:3])
@@ -182,11 +185,11 @@ async def get_post_info(session, webpage_url, tid):
                     images.append(img_url)
 
         final_images = images[:MAX_IMAGES_PER_MSG]
-        logging.info(f"TID={tid} 图片提取完成：共{len(images)}张，保留前{len(final_images)}张")
-        return final_images, False
+        logging.info(f"TID={tid} 图片提取完成（状态码：{status_code}）：共{len(images)}张，保留前{len(final_images)}张")
+        return final_images, False, status_code
     except Exception as e:
-        logging.error(f"TID={tid} 帖子信息获取异常：{str(e)}")
-        return [], False
+        logging.error(f"TID={tid} 帖子信息获取异常（状态码：{status_code}）：{str(e)}")
+        return [], False, status_code
 
 # ====================== Markdown转义/消息构造 =======================
 def escape_markdown(text):
@@ -200,11 +203,8 @@ def build_caption(title, author, link):
     footer = """
 论坛最新地址:
 tyw29.cc  tyw30.cc  tyw33.cc
-
 点击前往福利通知群: https://www.safew.vc/tyw777
-
 点击前往聊天群组: https://www.sfw.vc/tyw666
-
 天涯论坛（唯一联系）方式：
 沈复：＠tywcc
 沐泽：＠ssss001
@@ -332,7 +332,7 @@ async def send_text_msg(session, caption, tid, delay=5):
         logging.error(f"TID={tid} 文本发送异常：{str(e)}")
         return False
 
-# ====================== 待审核TID检查 =======================
+# ====================== 核心修复：待审核TID检查（新增404处理）======================
 async def check_pending_tids(session):
     pending_tids = load_pending_tids()
     if not pending_tids:
@@ -341,19 +341,36 @@ async def check_pending_tids(session):
 
     logging.info(f"\n=== 开始检查待审核TID（共{len(pending_tids)}条 → {pending_tids}）===")
     sent_tids = load_sent_tids()
-    passed_tids = []
-    still_pending = []
+    passed_tids = []       # 审核通过+推送成功
+    still_pending = []     # 仍待审核/暂时无法访问
+    deleted_tids = []      # 404删除的TID
 
     for tid in pending_tids:
         link = f"{FIXED_PROJECT_URL}thread-{tid}.htm"
         logging.info(f"检查TID={tid} 审核状态：{link[:50]}...")
         
-        images, is_pending = await get_post_info(session, link, tid)
+        # 接收状态码，区分404和正常情况
+        images, is_pending, status_code = await get_post_info(session, link, tid)
+
+        # 1. 404状态：帖子已删除，不推送，从待审核移除
+        if status_code == 404:
+            deleted_tids.append(tid)
+            logging.warning(f"TID={tid} 帖子返回404（已删除），不推送，从待审核列表移除")
+            continue
+
+        # 2. 其他非200状态：暂时无法访问，保留待下次检查
+        if status_code != 200:
+            still_pending.append(tid)
+            logging.warning(f"TID={tid} 帖子请求异常（状态码：{status_code}），保留待下次检查")
+            continue
+
+        # 3. 200状态：按审核状态处理
         if is_pending:
             still_pending.append(tid)
             logging.info(f"TID={tid} 仍在审核中，保留待下次检查")
             continue
 
+        # 4. 审核通过：执行推送
         title = f"待审核通过帖（TID：{tid}）"
         author = "未知用户"
         caption = build_caption(title, author, link)
@@ -374,12 +391,16 @@ async def check_pending_tids(session):
             still_pending.append(tid)
             logging.warning(f"TID={tid} 审核通过但推送失败，保留待下次重试")
 
-    save_pending_tids(still_pending)
+    # 更新各列表
+    save_pending_tids(still_pending)  # 仅保留仍待审核的TID
     if passed_tids:
         save_sent_tids(passed_tids, sent_tids)
-    logging.info(f"待审核TID检查完成：{len(passed_tids)}条通过，{len(still_pending)}条仍待审核")
+    if deleted_tids:
+        logging.info(f"待审核TID检查完成：{len(passed_tids)}条通过，{len(still_pending)}条仍待审核，{len(deleted_tids)}条已删除")
+    else:
+        logging.info(f"待审核TID检查完成：{len(passed_tids)}条通过，{len(still_pending)}条仍待审核")
 
-# ====================== 核心修复：全新帖子推送 =======================
+# ====================== 全新帖子推送（同步404处理）======================
 async def push_new_posts(session, new_entries):
     if not new_entries:
         logging.info("无全新帖子待推送")
@@ -387,8 +408,8 @@ async def push_new_posts(session, new_entries):
 
     logging.info(f"\n=== 开始推送全新帖子（共{len(new_entries)}条）===")
     sent_tids = load_sent_tids()
-    pending_tids = load_pending_tids()  # 初始待审核列表
-    success_pushed = []  # 仅记录“推送成功”的TID（修复核心：替换原pushed_tids）
+    pending_tids = load_pending_tids()
+    success_pushed = []
 
     for i, entry in enumerate(new_entries):
         tid = entry["tid"]
@@ -397,16 +418,27 @@ async def push_new_posts(session, new_entries):
         author = entry.get("author", "未知用户").strip()
         delay = 5 if i > 0 else 0
 
-        # 获取帖子状态
-        images, is_pending = await get_post_info(session, link, tid)
+        # 接收状态码，处理404
+        images, is_pending, status_code = await get_post_info(session, link, tid)
+        
+        # 404：不推送，不加入任何列表
+        if status_code == 404:
+            logging.warning(f"TID={tid} 全新帖子返回404（已删除），跳过推送")
+            continue
+        
+        # 非404异常：不推送，不加入待审核
+        if status_code != 200:
+            logging.warning(f"TID={tid} 全新帖子请求异常（{status_code}），跳过推送")
+            continue
+
+        # 200+待审核：加入待审核
         if is_pending:
-            # 待审核：仅更新待审核列表，不加入推送成功列表
             pending_tids.append(tid)
             save_pending_tids(pending_tids)
             logging.info(f"TID={tid} 新增待审核 → 待审核列表：{pending_tids}")
             continue
 
-        # 正常推送：推送成功后加入success_pushed
+        # 200+正常：推送
         caption = build_caption(title, author, link)
         success = False
         if len(images) == 1:
@@ -421,7 +453,6 @@ async def push_new_posts(session, new_entries):
             sent_tids.append(tid)
             logging.info(f"TID={tid} 全新帖子推送成功 → 已推送列表待更新：{success_pushed}")
 
-    # 仅更新“推送成功”的TID到已推送文件
     if success_pushed:
         save_sent_tids(success_pushed, sent_tids)
     else:
@@ -430,9 +461,7 @@ async def push_new_posts(session, new_entries):
 # ====================== 主逻辑整合 =======================
 async def check_for_updates():
     async with aiohttp.ClientSession() as session:
-        # 第一步：检查待审核TID
         await check_pending_tids(session)
-        # 第二步：处理全新帖子
         sent_tids = load_sent_tids()
         pending_tids = load_pending_tids()
         new_entries = fetch_updates(sent_tids, pending_tids)
@@ -446,7 +475,6 @@ async def main():
         logging.error("❌ 缺少必要环境配置，终止运行")
         return
 
-    # 初始化待审核文件（首次运行）
     if not os.path.exists(PENDING_POSTS_FILE):
         save_pending_tids([])
         logging.info(f"初始化待审核文件：{PENDING_POSTS_FILE}")
