@@ -1,7 +1,7 @@
 name: RSS to SafeW
 on:
   schedule:
-    - cron: "*/7 * * * *"  # 每7分钟触发一次（全天无时段限制）
+    - cron: "*/7 * * * *"  # 每7分钟触发一次
   workflow_dispatch:  # 保留手动触发功能
 
 jobs:
