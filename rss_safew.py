@@ -89,7 +89,7 @@ def save_pending_tids(tids):
         unique_tids = sorted(list(set(tids)))
         with open(PENDING_POSTS_FILE, "w", encoding="utf-8") as f:
             json.dump(unique_tids, f, ensure_ascii=False, indent=2)
-        logging.info(f"待审核TID更新：当前共{len(unique_tids)}条")
+        logging.info(f"待审核TID更新：当前共{len(unique_tids)}条 → {unique_tids}")  # 新增：显示具体TID
     except Exception as e:
         logging.error(f"保存待审核TID失败：{str(e)}")
 
@@ -129,9 +129,8 @@ def fetch_updates(sent_tids, pending_tids):
         logging.error(f"获取RSS异常：{str(e)}")
         return None
 
-# ====================== 核心修复：帖子审核状态检测 =======================
+# ====================== 帖子信息获取（审核+图片）=======================
 async def get_post_info(session, webpage_url, tid):
-    """获取帖子图片和审核状态（修复审核标签检测）"""
     try:
         headers = {
             "User-Agent": USER_AGENT,
@@ -147,31 +146,22 @@ async def get_post_info(session, webpage_url, tid):
         soup = BeautifulSoup(html, "html.parser")
         is_pending = False
 
-        # 修复：放宽审核标签匹配条件
-        # 1. 找到所有包含"card-title"的h4标签（不严格匹配所有class）
+        # 审核标签检测
         audit_h4_tags = soup.find_all("h4", class_=re.compile(r"card-title"))
-        logging.debug(f"TID={tid} 找到{len(audit_h4_tags)}个含card-title的h4标签")
-
-        # 2. 匹配文本（忽略空格、换行，兼容文本格式差异）
         audit_pattern = re.compile(r"本帖正在审核中.*您无权查看", re.DOTALL | re.UNICODE)
         for h4_tag in audit_h4_tags:
-            tag_text = h4_tag.get_text(strip=True)  # 去除所有空格和换行
-            logging.debug(f"TID={tid} 检测h4文本：{tag_text[:50]}...")
+            tag_text = h4_tag.get_text(strip=True)
             if audit_pattern.search(tag_text):
                 is_pending = True
                 break
-
-        # 3. 额外容错：直接搜索整个页面的审核文本（防止标签不是h4的情况）
-        if not is_pending:
-            if audit_pattern.search(html):
-                is_pending = True
-                logging.info(f"TID={tid} 页面中找到审核文本（非h4标签）")
+        if not is_pending and audit_pattern.search(html):
+            is_pending = True
 
         if is_pending:
             logging.info(f"TID={tid} 确认待审核状态，加入待审核列表")
             return [], True
 
-        # 正常提取图片
+        # 图片提取
         target_divs = soup.find_all("div", class_="message break-all", isfirst="1") or soup.find_all("div", class_="message break-all")
         if not target_divs:
             logging.warning(f"TID={tid} 未找到正文div，无图片")
@@ -211,7 +201,7 @@ def build_caption(title, author, link):
 论坛最新地址:
 tyw29.cc  tyw30.cc  tyw33.cc
 
-点击前往福利通知群: https://www.safw.vc/tyw777
+点击前往福利通知群: https://www.safew.vc/tyw777
 
 点击前往聊天群组: https://www.sfw.vc/tyw666
 
@@ -349,7 +339,7 @@ async def check_pending_tids(session):
         logging.info("无待审核TID，跳过检查")
         return
 
-    logging.info(f"\n=== 开始检查待审核TID（共{len(pending_tids)}条）===")
+    logging.info(f"\n=== 开始检查待审核TID（共{len(pending_tids)}条 → {pending_tids}）===")
     sent_tids = load_sent_tids()
     passed_tids = []
     still_pending = []
@@ -389,16 +379,16 @@ async def check_pending_tids(session):
         save_sent_tids(passed_tids, sent_tids)
     logging.info(f"待审核TID检查完成：{len(passed_tids)}条通过，{len(still_pending)}条仍待审核")
 
-# ====================== 全新帖子推送 =======================
+# ====================== 核心修复：全新帖子推送 =======================
 async def push_new_posts(session, new_entries):
     if not new_entries:
         logging.info("无全新帖子待推送")
-        return []
-    
+        return
+
     logging.info(f"\n=== 开始推送全新帖子（共{len(new_entries)}条）===")
     sent_tids = load_sent_tids()
-    pending_tids = load_pending_tids()
-    pushed_tids = []
+    pending_tids = load_pending_tids()  # 初始待审核列表
+    success_pushed = []  # 仅记录“推送成功”的TID（修复核心：替换原pushed_tids）
 
     for i, entry in enumerate(new_entries):
         tid = entry["tid"]
@@ -407,14 +397,16 @@ async def push_new_posts(session, new_entries):
         author = entry.get("author", "未知用户").strip()
         delay = 5 if i > 0 else 0
 
+        # 获取帖子状态
         images, is_pending = await get_post_info(session, link, tid)
         if is_pending:
+            # 待审核：仅更新待审核列表，不加入推送成功列表
             pending_tids.append(tid)
             save_pending_tids(pending_tids)
-            pushed_tids.append(tid)
-            logging.info(f"TID={tid} 新增待审核，已加入pending列表")
+            logging.info(f"TID={tid} 新增待审核 → 待审核列表：{pending_tids}")
             continue
 
+        # 正常推送：推送成功后加入success_pushed
         caption = build_caption(title, author, link)
         success = False
         if len(images) == 1:
@@ -425,18 +417,22 @@ async def push_new_posts(session, new_entries):
             success = await send_text_msg(session, caption, tid, delay)
 
         if success:
-            pushed_tids.append(tid)
+            success_pushed.append(tid)
             sent_tids.append(tid)
-            logging.info(f"TID={tid} 全新帖子推送成功")
+            logging.info(f"TID={tid} 全新帖子推送成功 → 已推送列表待更新：{success_pushed}")
 
-    if pushed_tids:
-        save_sent_tids(pushed_tids, sent_tids)
-    return pushed_tids
+    # 仅更新“推送成功”的TID到已推送文件
+    if success_pushed:
+        save_sent_tids(success_pushed, sent_tids)
+    else:
+        logging.info("无全新帖子推送成功，不更新已推送列表")
 
 # ====================== 主逻辑整合 =======================
 async def check_for_updates():
     async with aiohttp.ClientSession() as session:
+        # 第一步：检查待审核TID
         await check_pending_tids(session)
+        # 第二步：处理全新帖子
         sent_tids = load_sent_tids()
         pending_tids = load_pending_tids()
         new_entries = fetch_updates(sent_tids, pending_tids)
@@ -450,6 +446,7 @@ async def main():
         logging.error("❌ 缺少必要环境配置，终止运行")
         return
 
+    # 初始化待审核文件（首次运行）
     if not os.path.exists(PENDING_POSTS_FILE):
         save_pending_tids([])
         logging.info(f"初始化待审核文件：{PENDING_POSTS_FILE}")
