@@ -165,7 +165,8 @@ def fetch_updates(sent_tids, pending_tids):
             if tid not in sent_tids and tid not in pending_tids:
                 entry["tid"] = tid
                 entry["rss_title"] = entry.get("title", "无标题").strip() 
-                entry["rss_author"] = entry.get("dc_creator", "未知用户").strip() 
+                author = entry.get("dc_creator") or entry.get("creator") or "未知用户"
+                entry["rss_author"] = author.strip()   
                 desc = entry.get("description", "无描述").strip()
                 entry["rss_description"] = re.sub(r'<[^>]+>', '', desc)  
                 valid_entries.append(entry)
