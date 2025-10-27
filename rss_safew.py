@@ -164,13 +164,23 @@ def fetch_updates(sent_tids, pending_tids):
                 continue
             if tid not in sent_tids and tid not in pending_tids:
                 entry["tid"] = tid
+                # 提取标题（原逻辑保留）
                 entry["rss_title"] = entry.get("title", "无标题").strip() 
-                author = entry.get("dc_creator") or entry.get("creator") or "未知用户"
-                entry["rss_author"] = author.strip()   
+                # 核心修复：提取作者信息（从dc命名空间子字典获取）
+                # 1. 优先从feedparser解析的dc命名空间子字典获取（标准路径）
+                dc_subdict = entry.get("dc", {})  # 获取dc命名空间子字典
+                author = dc_subdict.get("creator")  # 从子字典提取creator（对应<dc:creator>）
+                # 2. 兜底：兼容部分特殊RSS的扁平化解析场景
+                if not author:
+                    author = entry.get("dc_creator") or entry.get("creator")
+                # 3. 最终处理：空值替换为未知用户，去除前后空格
+                entry["rss_author"] = author.strip() if (author and str(author).strip()) else "未知用户"
+                # 提取描述（原逻辑保留）
                 desc = entry.get("description", "无描述").strip()
                 entry["rss_description"] = re.sub(r'<[^>]+>', '', desc)  
+                # 加入有效列表并打印调试日志
                 valid_entries.append(entry)
-                logging.debug(f"新增待处理TID={tid}（标题：{entry['rss_title'][:20]}...）")
+                logging.debug(f"新增待处理TID={tid}（标题：{entry['rss_title'][:20]}... 作者：{entry['rss_author']}）")
         
         logging.info(f"RSS筛选完成：共{len(valid_entries)}条全新待推送帖")
         return sorted(valid_entries, key=lambda x: x["tid"])
@@ -483,7 +493,7 @@ async def push_new_posts(session, new_entries):
                 "description": rss_description
             })
             save_pending_data(pending_data)
-            logging.info(f"TID={tid} 新增待审核（标题：{rss_title[:20]}...）")
+            logging.info(f"TID={tid} 新增待审核（标题：{rss_title[:20]}... 作者：{rss_author}）")
             continue
 
         caption = build_caption(
@@ -504,7 +514,7 @@ async def push_new_posts(session, new_entries):
         if success:
             success_pushed.append(tid)
             sent_tids.append(tid)
-            logging.info(f"TID={tid} 全新帖子推送成功")
+            logging.info(f"TID={tid} 全新帖子推送成功（作者：{rss_author}）")
 
     if success_pushed:
         save_sent_tids(success_pushed, sent_tids)
