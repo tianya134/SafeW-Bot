@@ -1,8 +1,10 @@
 name: RSS to SafeW
 on:
   schedule:
-    - cron: "*/10 * * * *"
-  workflow_dispatch:
+    - cron: "0 */3 16-21 * * *"  
+    - cron: "*/15 23-1 * * *"  
+    - cron: "*/7 2-15 * * *"    
+  workflow_dispatch:  
 
 jobs:
   run:
@@ -14,14 +16,14 @@ jobs:
           token: ${{ secrets.RSS_GITHUB_PAT }}
           fetch-depth: 0
 
-      - name: 设置Python（解决缓存报错）
+      - name: 设置Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.10"
           cache: pip  
           cache-dependency-path: requirements.txt  
 
-      - name: 安装依赖（通过requirements.txt）
+      - name: 安装依赖
         run: |
           pip install --upgrade pip
           pip install -r requirements.txt  
@@ -37,6 +39,5 @@ jobs:
         uses: stefanzweifel/git-auto-commit-action@v4
         with:
           commit_message: "更新推送和待审核记录"
-          # 同时包含两个JSON文件
           file_pattern: "sent_posts.json pending_tids.json"
           branch: main
