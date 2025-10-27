@@ -33,9 +33,10 @@ jobs:
           RSS_FEED_URL: ${{ secrets.RSS_FEED_URL }}
         run: python rss_safew.py
 
-      - name: 提交去重记录
+      - name: 提交推送与待审核记录
         uses: stefanzweifel/git-auto-commit-action@v4
         with:
-          commit_message: "更新推送记录"
-          file_pattern: "sent_posts.json"
+          commit_message: "更新推送和待审核记录"
+          # 同时包含两个JSON文件
+          file_pattern: "sent_posts.json pending_tids.json"
           branch: main
