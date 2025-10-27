@@ -39,3 +39,5 @@ jobs:
           commit_message: "更新推送和待审核记录"
           file_pattern: "sent_posts.json pending_tids.json"
           branch: main
+          commit_user_name: "GitHub Actions"
+          commit_user_email: "actions@github.com"
