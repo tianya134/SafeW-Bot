@@ -185,29 +185,38 @@ async def get_post_status(session, webpage_url, tid):
             status_code = resp.status
             if resp.status != 200:
                 logging.warning(f"TID={tid} 帖子请求失败（状态码：{resp.status}）")
-                return [], False, status_code
+                return [], False, status_code, False
             html = await resp.text()
 
         soup = BeautifulSoup(html, "html.parser")
         is_pending = False
+        is_rejected = False
 
+        # 检测未审核通过状态
+        audit_pattern_rejected = re.compile(r"本帖未审核通过，您无权查看！", re.DOTALL | re.UNICODE)
+        if audit_pattern_rejected.search(html):
+            is_rejected = True
+            logging.info(f"TID={tid} 确认未审核通过状态")
+            return [], False, status_code, is_rejected
+
+        # 检测待审核状态
         audit_h4_tags = soup.find_all("h4", class_=re.compile(r"card-title"))
-        audit_pattern = re.compile(r"本帖正在审核中.*您无权查看", re.DOTALL | re.UNICODE)
+        audit_pattern_pending = re.compile(r"本帖正在审核中.*您无权查看", re.DOTALL | re.UNICODE)
         for h4_tag in audit_h4_tags:
-            if audit_pattern.search(h4_tag.get_text(strip=True)):
+            if audit_pattern_pending.search(h4_tag.get_text(strip=True)):
                 is_pending = True
                 break
-        if not is_pending and audit_pattern.search(html):
+        if not is_pending and audit_pattern_pending.search(html):
             is_pending = True
 
         if is_pending:
             logging.info(f"TID={tid} 确认待审核状态")
-            return [], True, status_code
+            return [], True, status_code, False
 
         target_divs = soup.find_all("div", class_="message break-all", isfirst="1") or soup.find_all("div", class_="message break-all")
         if not target_divs:
             logging.warning(f"TID={tid} 未找到正文div，无图片")
-            return [], False, status_code
+            return [], False, status_code, False
 
         images = []
         base_domain = "/".join(webpage_url.split("/")[:3])
@@ -225,10 +234,10 @@ async def get_post_status(session, webpage_url, tid):
 
         final_images = images[:MAX_IMAGES_PER_MSG]
         logging.info(f"TID={tid} 图片提取完成：共{len(images)}张，保留前{len(final_images)}张")
-        return final_images, False, status_code
+        return final_images, False, status_code, False
     except Exception as e:
         logging.error(f"TID={tid} 帖子信息获取异常：{str(e)}")
-        return [], False, status_code
+        return [], False, status_code, False
 
 # ====================== Markdown转义/消息构造 =======================
 def escape_markdown(text):
@@ -388,7 +397,7 @@ async def check_pending_data(session):
         link = f"{FIXED_PROJECT_URL}thread-{tid}.htm"
         logging.info(f"检查TID={tid} 审核状态：{link[:50]}...")
         
-        images, is_pending, status_code = await get_post_status(session, link, tid)
+        images, is_pending, status_code, is_rejected = await get_post_status(session, link, tid)
 
         if status_code == 404:
             deleted_tids.append(tid)
@@ -398,6 +407,13 @@ async def check_pending_data(session):
         if status_code != 200:
             still_pending.append(item)
             logging.warning(f"TID={tid} 请求异常（{status_code}），保留待审核")
+            continue
+
+        if is_rejected:
+            # 未审核通过：移出待审核，加入已推送，但不发送消息
+            passed_tids.append(tid)
+            sent_tids.append(tid)
+            logging.info(f"TID={tid} 未审核通过，移出待审核并标记为已推送（不发送消息）")
             continue
 
         if is_pending:
@@ -452,7 +468,7 @@ async def push_new_posts(session, new_entries):
         rss_author = entry["rss_author"]
         logging.debug(f"TID={tid} RSS信息：标题={rss_title[:20]}，作者={rss_author}")
 
-        images, is_pending, status_code = await get_post_status(session, link, tid)
+        images, is_pending, status_code, is_rejected = await get_post_status(session, link, tid)
         
         if status_code == 404:
             logging.warning(f"TID={tid} 帖子已删除（404），跳过")
@@ -462,13 +478,19 @@ async def push_new_posts(session, new_entries):
             logging.warning(f"TID={tid} 请求异常（{status_code}），跳过")
             continue
 
+        if is_rejected:
+            # 未审核通过：直接加入已推送（不发送消息）
+            success_pushed.append(tid)
+            sent_tids.append(tid)
+            logging.info(f"TID={tid} 未审核通过，标记为已推送（不发送消息）")
+            continue
+
         if is_pending:
             pending_data.append({
                 "tid": tid,
                 "title": rss_title,
                 "author": rss_author
             })
-            save_pending_data(pending_data)
             logging.info(f"TID={tid} 新增待审核（标题：{rss_title[:20]}... 作者：{rss_author}）")
             continue
 
@@ -491,10 +513,14 @@ async def push_new_posts(session, new_entries):
             sent_tids.append(tid)
             logging.info(f"TID={tid} 全新帖子推送成功（作者：{rss_author}）")
 
+    # 保存待审核数据（如有新增）
+    if any(entry["tid"] in [d["tid"] for d in pending_data] for entry in new_entries):
+        save_pending_data(pending_data)
+    
     if success_pushed:
         save_sent_tids(success_pushed, sent_tids)
     else:
-        logging.info("无全新帖子推送成功")
+        logging.info("无全新帖子推送")
 
 # ====================== 主逻辑 =======================
 async def check_for_updates():
