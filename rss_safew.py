@@ -237,7 +237,8 @@ async def get_post_status(session, webpage_url, tid):
         return final_images, False, status_code, False
     except Exception as e:
         logging.error(f"TID={tid} 帖子信息获取异常：{str(e)}")
-        return [], False, status_code, False
+        # 异常时返回特殊状态码-1，表示获取失败
+        return [], False, -1, False
 
 # ====================== Markdown转义/消息构造 =======================
 def escape_markdown(text):
@@ -399,6 +400,12 @@ async def check_pending_data(session):
         
         images, is_pending, status_code, is_rejected = await get_post_status(session, link, tid)
 
+        # 处理获取异常的情况（status_code == -1）
+        if status_code == -1:
+            still_pending.append(item)
+            logging.warning(f"TID={tid} 获取状态异常，保留待审核")
+            continue
+
         if status_code == 404:
             deleted_tids.append(tid)
             logging.warning(f"TID={tid} 帖子已删除（404），从待审核移除")
@@ -470,6 +477,11 @@ async def push_new_posts(session, new_entries):
 
         images, is_pending, status_code, is_rejected = await get_post_status(session, link, tid)
         
+        # 处理获取异常的情况（status_code == -1）
+        if status_code == -1:
+            logging.warning(f"TID={tid} 获取状态异常，跳过推送")
+            continue
+        
         if status_code == 404:
             logging.warning(f"TID={tid} 帖子已删除（404），跳过")
             continue
@@ -520,7 +532,7 @@ async def push_new_posts(session, new_entries):
     if success_pushed:
         save_sent_tids(success_pushed, sent_tids)
     else:
-        logging.info("无全新帖子推送")
+        logging.info("无全新帖子推送成功")
 
 # ====================== 主逻辑 =======================
 async def check_for_updates():
