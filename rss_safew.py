@@ -16,7 +16,7 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 SENT_POSTS_FILE = os.path.join(SCRIPT_DIR, "sent_posts.json")
 PENDING_POSTS_FILE = os.path.join(SCRIPT_DIR, "pending_tids.json")
 MAX_PUSH_PER_RUN = 5
-FIXED_PROJECT_URL = "https://tyw29.cc/"
+FIXED_PROJECT_URL = "https://tyw44.cc/"
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
 MAX_IMAGES_PER_MSG = 10  
 
@@ -251,7 +251,7 @@ def escape_markdown(text):
 def build_caption(title, author, link):
     footer = """
 ✅论坛最新地址: 
-tyw29.cc  tyw30.cc tyw33.cc
+tyw44.cc  tyw30.cc tyw33.cc
 ✅点击加入交流群: https://www.sfw.vc/tyw666
 ✅天涯论坛（唯一联系）方式：
 沈复： @tywcc
